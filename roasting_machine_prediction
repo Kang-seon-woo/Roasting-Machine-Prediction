@@ -1,0 +1,483 @@
+'''
+슬라이드를 늘려 그림을 확대? 
+
+퀄리티 좋을때 보여주는곳, 나쁠때 보여주는 곳 데이터를 뽑아서 이러한 경우 퀄리티가 안좋아지더라 이런거 포함되면 좋겠다.
+(EX.퀄리티가 안좋아질때 독립변수와 종속변수를 찍어서 이때 안좋아지는걸 학습했다?)
+
+이읏라이어 날린거 특징적인거 보이는거 있으면 넣어주면 좋겠다.
+'''
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+import seaborn as sns
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_percentage_error
+
+# =============================================================================
+# # 1 도료 Quality 낮아지는 시점 분석
+# =============================================================================
+
+#Data 불러오기.
+x=pd.read_csv('data_X.csv')
+y=pd.read_csv('data_Y.csv')
+
+# X Data 날짜 제한.
+lim_x=x.drop(x.index[:4320], axis = 0)
+lim_x=lim_x.drop(x.index[1751040:],axis=0)
+
+
+# =============================================================================
+# # 3 XY 일치하고 Y 60배 후 Merge
+# =============================================================================
+# 60배 만들 리스트 Y 생
+augmented_y=[]
+
+for i in range(len(y)):
+    for j in range(60):
+        augmented_y.append(y.iloc[i, 1])
+
+y_df=pd.DataFrame(augmented_y)
+
+# Y Data 날짜 제한.
+y_df.columns=['quality']
+
+# XY 결합.
+lim_x=lim_x.reset_index(drop=True)
+xy_df = pd.concat([lim_x, y_df['quality']], axis=1, ignore_index=True)
+xy_df.columns = list(lim_x.columns) + ['quality']
+
+xy_df["date_time"] = pd.to_datetime(xy_df["date_time"])
+
+# =============================================================================
+# # xy 그래프 표현
+# =============================================================================
+# =============================================================================
+# x_xy_df=xy_df.drop(['date_time','quality'],axis=1)
+# y_xy_df=xy_df['quality']
+# 
+# t=0
+# 
+# plt.figure(0) 
+# plt.title('Data_X')
+# plt.xlabel('time')
+# plt.ylabel('Temp/Height/Drops')
+# plt.plot(x_xy_df[t:t+120])
+# plt.show()
+# 
+# plt.figure(20) 
+# plt.title('Data_y')
+# plt.xlabel('time')
+# plt.ylabel('quality')
+# plt.plot(y_xy_df[t:t+120])
+# plt.legend(['quality'])
+# plt.show()
+# 
+# =============================================================================
+# =============================================================================
+# # 이상치 제거 전 그래프 그리기
+# =============================================================================
+xy_00_df = xy_df[(xy_df['date_time'].dt.minute == 0)]
+xy_20_df = xy_df[(xy_df['date_time'].dt.minute == 20)]
+xy_40_df = xy_df[(xy_df['date_time'].dt.minute == 40)]
+
+
+x_axis=np.linspace(0,1000000,5) #x축 간단하게 만드는 array 
+x_ticks=np.linspace(0,1000000,5)
+
+plt.figure(13)
+plt.plot(xy_00_df['T_data_1_1'])
+plt.title('00 T_data_1_1')
+plt.xlabel('time')
+plt.ylabel('temporature')
+plt.ylim(-200,800)
+plt.xticks(x_ticks,x_axis) #x축 간단하게 만드는(x축 바꾸는) 코드
+
+plt.figure(14)
+plt.plot(xy_20_df['T_data_1_1'])
+plt.title('20 T_data_1_1')
+plt.xlabel('time')
+plt.ylabel('temporature')
+plt.ylim(-200,800)
+plt.xticks(x_ticks,x_axis) #x축 간단하게 만드는(x축 바꾸는) 코드
+
+plt.figure(15)
+plt.plot(xy_40_df['T_data_1_1'])
+plt.title('40 T_data_1_1')
+plt.xlabel('time')
+plt.ylabel('temporature')
+plt.ylim(-200,800)
+plt.xticks(x_ticks,x_axis) #x축 간단하게 만드는(x축 바꾸는) 코드
+
+# =============================================================================
+# # IQR을 이용한 아웃라이어 제거 함수
+# =============================================================================
+# 첫 번째 열 제외한 열 선택
+columns_to_check = xy_df.columns[1:]
+
+# 이상치 제거 함수 정의
+def remove_outliers(df, column):
+    q1 = df[column].quantile(0.25)
+    q3 = df[column].quantile(0.75)
+    iqr = q3 - q1
+    fence_low = q1 - 1.5 * iqr
+    fence_high = q3 + 1.5 * iqr
+    df = df.loc[(df[column] >= fence_low) & (df[column] <= fence_high)]
+    return df
+
+# 이상치 제거를 위한 빈 데이터프레임 생성
+cleaned_data = pd.DataFrame()
+
+# 각 열별로 이상치 제거 수행하여 cleaned_data에 추가
+for column in columns_to_check:
+    cleaned_column = remove_outliers(xy_df, column)
+    cleaned_data[column] = cleaned_column[column]
+
+# 첫 번째 열 추가
+cleaned_data.insert(0, xy_df.columns[0], xy_df[xy_df.columns[0]])
+
+# NaN 값을 각 열의 평균값으로 채우기
+cleaned_data = cleaned_data.fillna(cleaned_data.mean(numeric_only=True))
+
+# =============================================================================
+# # 00,20,40분 추출
+# =============================================================================
+xy_00_df = cleaned_data[(cleaned_data['date_time'].dt.minute == 0)]
+xy_20_df = cleaned_data[(cleaned_data['date_time'].dt.minute == 20)]
+xy_40_df = cleaned_data[(cleaned_data['date_time'].dt.minute == 40)]
+
+# 이상치 제거 후 그래프 그리기
+plt.figure(10)
+plt.plot(xy_00_df['T_data_1_1'])
+plt.title('00 T_data_1_1')
+plt.xlabel('time')
+plt.ylabel('temporature')
+plt.ylim(-200,800)
+plt.xticks(x_ticks,x_axis) #x축 간단하게 만드는(x축 바꾸는) 코드
+
+plt.figure(11)
+plt.plot(xy_20_df['T_data_1_1'])
+plt.title('20 T_data_1_1')
+plt.xlabel('time')
+plt.ylabel('temporature')
+plt.ylim(-200,800)
+plt.xticks(x_ticks,x_axis) #x축 간단하게 만드는(x축 바꾸는) 코드
+
+plt.figure(12)
+plt.plot(xy_40_df['T_data_1_1'])
+plt.title('40 T_data_1_1')
+plt.xlabel('time')
+plt.ylabel('temporature')
+plt.ylim(-200,800)
+plt.xticks(x_ticks,x_axis) #x축 간단하게 만드는(x축 바꾸는) 코드
+
+# =============================================================================
+# # 2 Correlation 분석
+# =============================================================================
+collist = cleaned_data.columns.tolist()
+
+heatmap=cleaned_data[collist[:]]
+heatmap_00=xy_00_df[collist[:]]
+heatmap_20=xy_20_df[collist[:]]
+heatmap_40=xy_40_df[collist[:]]
+
+#correlation 분석해 matrix 작성 
+correlation_matrix = heatmap.corr().round(1)
+correlation_matrix_00 = heatmap_00.corr().round(1)
+correlation_matrix_20 = heatmap_20.corr().round(1)
+correlation_matrix_40 = heatmap_40.corr().round(1)
+
+# 히트맵 출력시 절반 가려서 보기 좋게 만드는  코드 
+mask = np.zeros_like(correlation_matrix, dtype=bool)
+mask[np.triu_indices_from(mask)] = True
+
+plt.figure(1) 
+plt.title('Heat Map(xy_df)')
+sns.heatmap(correlation_matrix, cmap = 'RdYlBu_r', annot = True, mask=mask, linewidths=.5, cbar_kws={"shrink": .5}, vmin = -1,vmax = 1)  
+plt.show()
+
+plt.figure(2) 
+plt.title('00 Heat Map')
+sns.heatmap(correlation_matrix_00, cmap = 'RdYlBu_r', annot = True, mask=mask, linewidths=.5, cbar_kws={"shrink": .5}, vmin = -1,vmax = 1)  
+plt.show()
+
+plt.figure(3) 
+plt.title('20 Heat Map')
+sns.heatmap(correlation_matrix_20, cmap = 'RdYlBu_r', annot = True, mask=mask, linewidths=.5, cbar_kws={"shrink": .5}, vmin = -1,vmax = 1)  
+plt.show()
+
+plt.figure(4) 
+plt.title('40 Heat Map')
+sns.heatmap(correlation_matrix_40, cmap = 'RdYlBu_r', annot = True, mask=mask, linewidths=.5, cbar_kws={"shrink": .5}, vmin = -1,vmax = 1)  
+plt.show()
+
+# =============================================================================
+# # 4 Random Forest Regressor
+# =============================================================================
+# 상관 계수 높은 X와 Y 데이터 로드
+# 00분
+x_00_df=xy_00_df.drop(['date_time','T_data_4_1','T_data_4_2','T_data_4_3','AH_data','quality'],axis=1)
+#x_00_df=xy_00_df.iloc[:,7:10]
+y_00_df=xy_00_df['quality']
+
+# 20분
+x_20_df=xy_20_df.drop(['date_time','T_data_4_1','T_data_4_2','T_data_4_3','AH_data','quality'],axis=1)
+#x_20_df=xy_20_df.iloc[:,7:10]
+y_20_df=xy_20_df['quality']
+
+# 40분
+x_40_df=xy_40_df.drop(['date_time','T_data_4_1','T_data_4_2','T_data_4_3','AH_data','quality'],axis=1)
+#x_40_df=xy_40_df.iloc[:,7:10]
+y_40_df=xy_40_df['quality']
+
+
+# 전체
+x_df=xy_df.drop(['date_time','T_data_4_1','T_data_4_2','T_data_4_3','AH_data','quality'],axis=1)
+#x_40_df=xy_40_df.iloc[:,7:10]
+y_df=xy_df['quality']
+
+
+# 데이터 분할
+X_00_train, X_00_test, y_00_train, y_00_test = train_test_split(x_00_df, y_00_df, test_size=0.2, random_state=42)
+X_20_train, X_20_test, y_20_train, y_20_test = train_test_split(x_20_df, y_20_df, test_size=0.2, random_state=42)
+X_40_train, X_40_test, y_40_train, y_40_test = train_test_split(x_40_df, y_40_df, test_size=0.2, random_state=42)
+
+
+X_train, X_test, y_train, y_test = train_test_split(x_df, y_df, test_size=0.2, random_state=42)
+
+# RandomForestRegressor 모델 생성
+rf_regressor1 = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_regressor2 = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_regressor3 = RandomForestRegressor(n_estimators=100, random_state=42)
+
+# 모델 훈련
+rf_regressor1.fit(X_00_train, y_00_train)
+rf_regressor2.fit(X_20_train, y_20_train)
+rf_regressor3.fit(X_40_train, y_40_train)
+
+# 예측
+y_pred1 = rf_regressor1.predict(X_00_test)
+y_pred2 = rf_regressor2.predict(X_20_test)
+y_pred3 = rf_regressor3.predict(X_40_test)
+
+# R2 score
+r2_00_RFR = r2_score(y_00_test, y_pred1)
+r2_20_RFR = r2_score(y_20_test, y_pred2)
+r2_40_RFR = r2_score(y_40_test, y_pred3)
+
+# MSE
+mse_00_RFR = mean_squared_error(y_00_test, y_pred1)
+mse_20_RFR = mean_squared_error(y_20_test, y_pred2)
+mse_40_RFR = mean_squared_error(y_40_test, y_pred3)
+
+# MAE
+mae_00_RFR = mean_absolute_error(y_00_test, y_pred1)
+mae_20_RFR = mean_absolute_error(y_20_test, y_pred2)
+mae_40_RFR = mean_absolute_error(y_40_test, y_pred3)
+
+# MAPE
+mape_00_RFR = mean_absolute_percentage_error(y_00_test, y_pred1)
+mape_20_RFR = mean_absolute_percentage_error(y_20_test, y_pred2)
+mape_40_RFR = mean_absolute_percentage_error(y_40_test, y_pred3)
+
+print('#1 Random Forest Regressor')
+print('1시간 전 R2 Score:', r2_00_RFR)
+print('40분 전 R2 Score:', r2_20_RFR)
+print('20분 전 R2 Score:', r2_40_RFR)
+print('1시간 전 MSE Score:', mse_00_RFR)
+print('40분 전 MSE Score:', mse_20_RFR)
+print('20분 전 MSE Score:', mse_40_RFR)
+print('1시간 전 MAE Score:', mae_00_RFR)
+print('40분 전 MAE Score:', mae_20_RFR)
+print('20분 전 MAE Score:', mae_40_RFR)
+print('1시간 전 MAPE Score:', mape_00_RFR)
+print('40분 전 MAPE Score:', mape_20_RFR)
+print('20분 전 MAPE Score:', mape_40_RFR)
+
+
+# 각 특성의 중요도 확인
+feature_importance1 = pd.Series(rf_regressor1.feature_importances_, index=x_00_df.columns)
+feature_importance2 = pd.Series(rf_regressor2.feature_importances_, index=x_20_df.columns)
+feature_importance3 = pd.Series(rf_regressor3.feature_importances_, index=x_40_df.columns)
+feature_importance_00_sorted = feature_importance1.sort_values(ascending=False)
+feature_importance_20_sorted = feature_importance2.sort_values(ascending=False)
+feature_importance_40_sorted = feature_importance3.sort_values(ascending=False)
+
+# 중요도 그래프로 시각화
+plt.figure(5) 
+plt.bar(feature_importance_00_sorted.index, feature_importance_00_sorted.values)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.title('00 RFR FI')
+plt.xticks(rotation=45)  # x 축 레이블 회전
+plt.tight_layout()  # 그래프 요소 간격 조정
+plt.show()
+
+# 중요도 그래프로 시각화
+plt.figure(6) 
+plt.bar(feature_importance_20_sorted.index, feature_importance_20_sorted.values)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.title('20 RFR FI')
+plt.xticks(rotation=45)  # x 축 레이블 회전
+plt.tight_layout()  # 그래프 요소 간격 조정
+plt.show()  
+
+# 중요도 그래프로 시각화
+plt.figure(7) 
+plt.bar(feature_importance_40_sorted.index, feature_importance_40_sorted.values)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.title('40 RFR FI')
+plt.xticks(rotation=45)  # x 축 레이블 회전
+plt.tight_layout()  # 그래프 요소 간격 조정
+plt.show()
+
+# =============================================================================
+# # 5 Gradient Boosting Regressor
+# =============================================================================
+# Gradient Boosting Regressor 모델 생성
+model1 = GradientBoostingRegressor()
+model2 = GradientBoostingRegressor()
+model3 = GradientBoostingRegressor()
+
+# 모델 훈련
+model1.fit(X_00_train, y_00_train)
+model2.fit(X_20_train, y_20_train)
+model3.fit(X_40_train, y_40_train)
+
+# 예측
+y_pred1 = model1.predict(X_00_test)
+y_pred2 = model2.predict(X_20_test)
+y_pred3 = model3.predict(X_40_test)
+
+# R2 score
+r2_00_GBR = r2_score(y_00_test, y_pred1)
+r2_20_GBR = r2_score(y_20_test, y_pred2)
+r2_40_GBR = r2_score(y_40_test, y_pred3)
+
+# MSE
+mse_00_GBR = mean_squared_error(y_00_test, y_pred1)
+mse_20_GBR = mean_squared_error(y_20_test, y_pred2)
+mse_40_GBR = mean_squared_error(y_40_test, y_pred3)
+
+# MAE
+mae_00_GBR = mean_absolute_error(y_00_test, y_pred1)
+mae_20_GBR = mean_absolute_error(y_20_test, y_pred2)
+mae_40_GBR = mean_absolute_error(y_40_test, y_pred3)
+
+# MAE
+mae_00_GBR = mean_absolute_error(y_00_test, y_pred1)
+mae_20_GBR = mean_absolute_error(y_20_test, y_pred2)
+mae_40_GBR = mean_absolute_error(y_40_test, y_pred3)
+
+#MAPE
+mape_00_GBR = mean_absolute_percentage_error(y_00_test, y_pred1)
+mape_20_GBR = mean_absolute_percentage_error(y_20_test, y_pred2)
+mape_40_GBR = mean_absolute_percentage_error(y_40_test, y_pred3)
+
+print('#2 Gradient Boosting Regressor')
+print('1시간 전 R2 Score:', r2_00_GBR)
+print('40분 전 R2 Score:', r2_20_GBR)
+print('20분 전 R2 Score:', r2_40_GBR)
+print('1시간 전 MSE Score:', mse_00_GBR)
+print('40분 전 MSE Score:', mse_20_GBR)
+print('20분 전 MSE Score:', mse_40_GBR)
+print('1시간 전 MAE Score:', mae_00_GBR)
+print('40분 전 MAE Score:', mae_20_GBR)
+print('20분 전 MAE Score:', mae_40_GBR)
+print('1시간 전 MAPE Score:', mape_00_GBR)
+print('40분 전 MAPE Score:', mape_20_GBR)
+print('20분 전 MAPE Score:', mape_40_GBR)
+
+
+# 중요도 그래프로 시각화
+plt.figure(8) 
+plt.bar(feature_importance_00_sorted.index, feature_importance_00_sorted.values)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.title('00 GBR FI')
+plt.xticks(rotation=45)  # x 축 레이블 회전
+plt.tight_layout()  # 그래프 요소 간격 조정
+plt.show()
+
+# 중요도 그래프로 시각화
+plt.figure(9) 
+plt.bar(feature_importance_20_sorted.index, feature_importance_20_sorted.values)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.title('20 GBR FI')
+plt.xticks(rotation=45)  # x 축 레이블 회전
+plt.tight_layout()  # 그래프 요소 간격 조정
+plt.show()  
+
+# 중요도 그래프로 시각화
+plt.figure(10) 
+plt.bar(feature_importance_40_sorted.index, feature_importance_40_sorted.values)
+plt.xlabel('Features')
+plt.ylabel('Importance')
+plt.title('40 GBR FI')
+plt.xticks(rotation=45)  # x 축 레이블 회전
+plt.tight_layout()  # 그래프 요소 간격 조정
+plt.show()
+
+# =============================================================================
+# # 6 K Neighbor Regressor
+# =============================================================================
+# K-Nearest Neighbors Regressor 모델 생성
+model1 = KNeighborsRegressor(n_neighbors=5)
+model2 = KNeighborsRegressor(n_neighbors=5)
+model3 = KNeighborsRegressor(n_neighbors=5)
+
+# 모델 훈련
+model1.fit(X_00_train, y_00_train)
+model2.fit(X_20_train, y_20_train)
+model3.fit(X_40_train, y_40_train)
+
+# 예측
+y_pred1 = model1.predict(X_00_test)
+y_pred2 = model2.predict(X_20_test)
+y_pred3 = model3.predict(X_40_test)
+
+# R2 score
+r2_00_KNR = r2_score(y_00_test, y_pred1)
+r2_20_KNR = r2_score(y_20_test, y_pred2)
+r2_40_KNR = r2_score(y_40_test, y_pred3)
+
+# MSE
+mse_00_KNR = mean_squared_error(y_00_test, y_pred1)
+mse_20_KNR = mean_squared_error(y_20_test, y_pred2)
+mse_40_KNR = mean_squared_error(y_40_test, y_pred3)
+
+# MAE
+mae_00_KNR = mean_absolute_error(y_00_test, y_pred1)
+mae_20_KNR = mean_absolute_error(y_20_test, y_pred2)
+mae_40_KNR = mean_absolute_error(y_40_test, y_pred3)
+
+# MAPE
+mape_00_KNR = mean_absolute_percentage_error(y_00_test, y_pred1)
+mape_20_KNR = mean_absolute_percentage_error(y_20_test, y_pred2)
+mape_40_KNR = mean_absolute_percentage_error(y_40_test, y_pred3)
+
+print('#3 K Neighbors Regressor')
+print('1시간 전 R2 Score:', r2_00_KNR)
+print('40분 전 R2 Score:', r2_20_KNR)
+print('20분 전 R2 Score:', r2_40_KNR)
+print('1시간 전 MSE Score:', mse_00_KNR)
+print('40분 전 MSE Score:', mse_20_KNR)
+print('20분 전 MSE Score:', mse_40_KNR)
+print('1시간 전 MAE Score:', mae_00_KNR)
+print('40분 전 MAE Score:', mae_20_KNR)
+print('20분 전 MAE Score:', mae_40_KNR)
+print('1시간 전 MAPE Score:', mape_00_KNR)
+print('40분 전 MAPE Score:', mape_20_KNR)
+print('20분 전 MAPE Score:', mape_40_KNR)
+
+
